@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline deliveries with km</title>
+<style>
+:root{--bg:#f4f6f6;--surface:#fff;--ink:#1c2a2f;--muted:#5d6d72;--head:#a9c1c6;--line:#b9c6c9;--accent:#1d5c63;--accent-ink:#fff;--focus:#e0a100;--bad:#b3261e;--pred-bg:#fff3c4}
+@media (prefers-color-scheme:dark){:root{--bg:#141b1d;--surface:#1c2629;--ink:#e6eeef;--muted:#93a4a8;--head:#2f4a50;--line:#3b4f54;--accent:#7fc4cc;--accent-ink:#0f1a1c;--bad:#ff8a80;--pred-bg:#3d3715}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:1400px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:26px;margin:0 0 4px}
+p.lead{margin:0 0 22px;color:var(--muted);max-width:70ch}
+.defaults{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:22px;padding:14px;border:1px solid var(--line);background:var(--surface);border-radius:6px}
+.defaults h2{grid-column:1/-1;margin:0;font-size:14px}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+input{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:6px 8px;width:100%;min-width:0}
+input:focus-visible,button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.grow{flex:1}
+button{font:inherit;cursor:pointer;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);padding:7px 14px;font-weight:600}
+button.primary{background:var(--accent);color:var(--accent-ink)}
+button.ghost{border-color:var(--line);color:var(--muted);font-weight:400;padding:4px 8px}
+.chk{flex-direction:row;align-items:center;gap:6px}.chk input{width:auto}
+.wrap{overflow-x:auto;border:1px solid var(--ink);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:1800px}
+th{background:var(--head);text-align:left;font-style:italic;padding:8px;border:1px solid var(--ink);white-space:nowrap}
+td{border:1px solid var(--ink);padding:0;vertical-align:top}
+td input{border:0;border-radius:0;background:transparent;padding:8px}
+td input[readonly]{color:var(--muted);font-size:13px}
+td.cost input,td.km input{text-align:right}
+td.pred input[readonly]{font-weight:700;font-size:17px;color:var(--ink);background:var(--pred-bg)}
+td .st{display:block;padding:0 8px 6px;font-size:12px;color:var(--muted)}
+td .st.err{color:var(--bad)}
+td.act{width:1%;white-space:nowrap;padding:2px 4px}
+.foot{display:flex;justify-content:space-between;gap:12px;margin-top:10px;color:var(--muted);font-size:14px}
+.note{margin-top:16px;color:var(--muted);font-size:13px;max-width:80ch}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:6px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.on{opacity:1}
+</style>
+</head>
+<body>
+<main>
+<h1>Offline deliveries</h1>
+<p class="lead">Type the pick up and drop off addresses. The tool finds the coordinates and calculates the driving distance in km. Then copy the rows and paste them into Excel.</p>
+
+<section class="defaults" aria-label="Defaults for new rows">
+<h2>Defaults for new rows</h2>
+<label>City added to addresses<input id="d-city" placeholder="Beograd"></label>
+<label>Requester<input id="d-requester"></label>
+<label>Team<input id="d-team"></label>
+<label>Pick up<input id="d-pickup"></label>
+<label>Drop off<input id="d-dropoff"></label>
+<label>Base cost rsd<input id="d-base" type="number" min="0" step="1"></label>
+<label>Rate rsd per km<input id="d-rate" type="number" min="0" step="1"></label>
+<label>Minimum cost rsd<input id="d-min" type="number" min="0" step="1"></label>
+<label>Sheet web app URL<input id="d-sheeturl" placeholder="https://script.google.com/macros/s/.../exec"></label>
+<label>Sheet token<input id="d-token" type="password" autocomplete="off"></label>
+</section>
+
+<div class="bar">
+<button class="primary" id="add">Add row</button>
+<button id="calc">Calculate all km</button>
+<button id="copy">Copy for Excel</button>
+<button id="send">Send to Sheet</button>
+<label class="chk"><input type="checkbox" id="hdr"> Include header row</label>
+<span class="grow"></span>
+<button class="ghost" id="clear">Clear all rows</button>
+</div>
+
+<div class="wrap"><table>
+<thead><tr><th>Requester</th><th>Date</th><th>Team</th><th>Content</th><th>Pick up</th><th>Drop off</th><th>Time</th><th>Predicted cost rsd</th><th>Pick up lat, lon</th><th>Drop off lat, lon</th><th>Km</th><th>Courier ID</th><th></th></tr></thead>
+<tbody id="rows"></tbody>
+</table></div>
+<div class="foot"><span id="count"></span><span id="total"></span></div>
+<p class="note">Coordinates come from OpenStreetMap (Nominatim) and the road distance from the public OSRM server. If a road route is not available, the km shows the straight-line distance and says so. Check the first few results on a map before relying on them.</p>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+(function(){
+var KEY="offline-deliveries-km-v1";
+var DEFAULT_SHEET_URL=""; // optional: paste the Apps Script link (ending in /exec) between the quotes
+var S={defaults:{city:"Beograd",requester:"",team:"",pickup:"",dropoff:"",cost:""},rows:[],cache:{}};
+try{var raw=localStorage.getItem(KEY);if(raw){var p=JSON.parse(raw);if(p&&p.rows)S=p}}catch(e){}
+if(!S.cache)S.cache={};
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function pad(n){return(n<10?"0":"")+n}
+function newRow(){var n=new Date(),d=S.defaults;return{requester:d.requester,date:n.getFullYear()+"-"+pad(n.getMonth()+1)+"-"+pad(n.getDate()),team:d.team,content:"",pickup:d.pickup,dropoff:d.dropoff,time:pad(n.getHours())+":"+pad(n.getMinutes())+":00",pc:"",dc:"",km:"",note:"",courierId:"",key:uid()}}
+function fmtDate(iso){var a=(iso||"").split("-");return a.length<3?"":(+a[1])+"/"+(+a[2])+"/"+a[0]}
+function fmtTime(t){var a=(t||"").split(":");if(a.length<2)return "";var h=+a[0],ap=h>=12?"PM":"AM";h=h%12;if(h===0)h=12;return h+":"+a[1]+":"+(a[2]||"00")+" "+ap}
+function toast(m){var t=document.getElementById("toast");t.textContent=m;t.className="on";setTimeout(function(){t.className=""},6000)}
+
+var last=0;
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+async function geocode(addr){
+var city=(S.defaults.city||"").trim(),q=addr.trim();
+if(city&&q.toLowerCase().indexOf(city.toLowerCase())<0)q+=", "+city;
+q+=", Serbia";
+var key=q.toLowerCase();
+if(S.cache[key])return S.cache[key];
+var wait=1200-(Date.now()-last);if(wait>0)await sleep(wait);
+last=Date.now();
+var res=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=rs&q="+encodeURIComponent(q));
+if(!res.ok)throw new Error("Geocoding failed ("+res.status+")");
+var j=await res.json();
+if(!j.length)throw new Error("Address not found: "+addr);
+var pt=[+(+j[0].lat).toFixed(6),+(+j[0].lon).toFixed(6)];
+S.cache[key]=pt;save();return pt
+}
+function haversine(a,b){
+var R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dn=(b[1]-a[1])*r;
+var x=Math.sin(dl/2)*Math.sin(dl/2)+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)*Math.sin(dn/2);
+return 2*R*Math.asin(Math.sqrt(x))
+}
+async function road(a,b){
+var res=await fetch("https://router.project-osrm.org/route/v1/driving/"+a[1]+","+a[0]+";"+b[1]+","+b[0]+"?overview=false");
+if(!res.ok)throw new Error("route");
+var j=await res.json();
+if(!j.routes||!j.routes.length)throw new Error("route");
+return j.routes[0].distance/1000
+}
+function rate(){var v=parseFloat(S.defaults.rate);return isNaN(v)?50:v}
+function base(){var v=parseFloat(S.defaults.base);return isNaN(v)?300:v}
+function minc(){var v=parseFloat(S.defaults.min);return isNaN(v)?500:v}
+function pred(r){var k=parseFloat(r.km);return isNaN(k)?0:Math.max(minc(),Math.round(base()+k*rate()))}
+var refs=new Map();
+function show(r){
+var e=refs.get(r);if(!e)return;
+e.pc.value=r.pc;e.dc.value=r.dc;e.km.value=r.km;e.pr.value=r.km===""?"":pred(r).toLocaleString("en-US")+" rsd";
+e.st.textContent=r.note||"";e.st.className="st"+(r.err?" err":"")
+}
+async function calc(r){
+if(!r.pickup.trim()||!r.dropoff.trim()){r.note="Enter both addresses";r.err=true;show(r);return}
+r.note="Looking up...";r.err=false;show(r);
+try{
+var a=await geocode(r.pickup),b=await geocode(r.dropoff);
+r.pc=a[0]+", "+a[1];r.dc=b[0]+", "+b[1];
+try{r.km=+(await road(a,b)).toFixed(1);r.note=""}
+catch(e){r.km=+haversine(a,b).toFixed(1);r.note="Straight line (no road route)"}
+r.err=false
+}catch(e){r.note=e.message==="Failed to fetch"?"Network blocked. Open this file from your computer or host it.":e.message;r.err=true}
+save();show(r);stats()
+}
+var tb=document.getElementById("rows");
+var COLS=[["requester","text"],["date","date"],["team","text"],["content","text"],["pickup","text"],["dropoff","text"],["time","time"]];
+function stats(){
+var k=0,pt=0;S.rows.forEach(function(r){k+=Number(r.km)||0;pt+=pred(r)});
+document.getElementById("count").textContent=S.rows.length+(S.rows.length===1?" delivery":" deliveries");
+document.getElementById("total").textContent="Total: "+k.toFixed(1)+" km, predicted cost "+pt.toLocaleString("en-US")+" rsd"
+}
+function render(){
+tb.textContent="";refs=new Map();
+S.rows.forEach(function(r,i){
+var tr=document.createElement("tr");
+COLS.forEach(function(c){
+var td=document.createElement("td");if(c[0]==="cost")td.className="cost";
+var inp=document.createElement("input");inp.type=c[1];inp.value=r[c[0]]||"";
+inp.setAttribute("aria-label",c[0]+" row "+(i+1));
+if(c[1]==="time")inp.step="1";
+inp.addEventListener("input",function(){r[c[0]]=inp.value;save();stats()});
+if(c[0]==="pickup"||c[0]==="dropoff")inp.addEventListener("change",function(){if(r.pickup.trim()&&r.dropoff.trim())calc(r)});
+td.appendChild(inp);tr.appendChild(td)
+});
+var e={};
+var tp=document.createElement("td");tp.className="cost pred";
+var pi=document.createElement("input");pi.readOnly=true;pi.setAttribute("aria-label","predicted cost row "+(i+1));
+tp.appendChild(pi);tr.appendChild(tp);e.pr=pi;
+["pc","dc"].forEach(function(k){
+var td=document.createElement("td");var inp=document.createElement("input");inp.readOnly=true;inp.setAttribute("aria-label",k+" row "+(i+1));
+td.appendChild(inp);tr.appendChild(td);e[k]=inp
+});
+var tk=document.createElement("td");tk.className="km";
+var ki=document.createElement("input");ki.type="number";ki.step="0.1";ki.setAttribute("aria-label","km row "+(i+1));
+ki.addEventListener("input",function(){r.km=ki.value;e.pr.value=ki.value===""?"":pred(r).toLocaleString("en-US")+" rsd";save();stats()});
+var st=document.createElement("span");st.className="st";
+tk.appendChild(ki);tk.appendChild(st);tr.appendChild(tk);e.km=ki;e.st=st;
+var tc=document.createElement("td");
+var ci=document.createElement("input");ci.type="text";ci.value=r.courierId||"";ci.setAttribute("aria-label","courier id row "+(i+1));
+ci.addEventListener("input",function(){r.courierId=ci.value.trim();save()});
+tc.appendChild(ci);tr.appendChild(tc);
+var ta=document.createElement("td");ta.className="act";
+var re=document.createElement("button");re.className="ghost";re.textContent="Recalculate";re.addEventListener("click",function(){calc(r)});
+var dup=document.createElement("button");dup.className="ghost";dup.textContent="Duplicate";dup.addEventListener("click",function(){S.rows.splice(i+1,0,Object.assign({},r,{key:uid()}));save();render()});
+var del=document.createElement("button");del.className="ghost";del.textContent="Remove";del.addEventListener("click",function(){S.rows.splice(i,1);save();render()});
+ta.appendChild(re);ta.appendChild(dup);ta.appendChild(del);tr.appendChild(ta);
+refs.set(r,e);tb.appendChild(tr);show(r)
+});
+stats()
+}
+function clean(v){return String(v==null?"":v).replace(/[\t\r\n]+/g," ").trim()}
+function ll(s){return (s||"").split(",").map(function(x){return x.trim()})}
+function tsv(){
+var L=[];
+if(document.getElementById("hdr").checked)L.push(["Requester","Date","Team","Content","Pick up","Drop off","Time","Predicted cost rsd","Km","Courier ID","Pick up lat","Pick up lon","Drop off lat","Drop off lon"].join("\t"));
+S.rows.forEach(function(r){
+var a=ll(r.pc),b=ll(r.dc);
+L.push([r.requester,fmtDate(r.date),r.team,r.content,r.pickup,r.dropoff,fmtTime(r.time),(r.km===""?"":pred(r)),r.km,r.courierId,a[0],a[1],b[0],b[1]].map(clean).join("\t"))
+});
+return L.join("\n")
+}
+function fallbackCopy(t){var x=document.createElement("textarea");x.value=t;x.style.position="fixed";x.style.opacity="0";document.body.appendChild(x);x.select();var ok=false;try{ok=document.execCommand("copy")}catch(e){}document.body.removeChild(x);return ok}
+document.getElementById("copy").addEventListener("click",function(){
+if(!S.rows.length){toast("Add a row first");return}
+var t=tsv(),n=S.rows.length;
+function done(ok){toast(ok?"Copied "+n+(n===1?" row":" rows")+". Paste into Excel.":"Copy was blocked.")}
+if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){done(true)},function(){done(fallbackCopy(t))});
+else done(fallbackCopy(t))
+});
+function uid(){return Math.random().toString(36).slice(2,10)+Date.now().toString(36)}
+function jsonp(url,payload){
+return new Promise(function(resolve,reject){
+var cb="cb"+Date.now()+Math.floor(Math.random()*1e6);
+var sc=document.createElement("script");
+var timer=setTimeout(function(){clean();reject(new Error("timeout"))},20000);
+function clean(){clearTimeout(timer);delete window[cb];if(sc.parentNode)sc.parentNode.removeChild(sc)}
+window[cb]=function(r){clean();resolve(r)};
+sc.onerror=function(){clean();reject(new Error("load"))};
+sc.src=url+(url.indexOf("?")<0?"?":"&")+"callback="+cb+"&payload="+encodeURIComponent(JSON.stringify(payload));
+document.head.appendChild(sc)
+})
+}
+document.getElementById("send").addEventListener("click",async function(){
+var url=(S.defaults.sheeturl||"").trim(),tok=(S.defaults.token||"").trim();
+if(!url){toast("Enter the Sheet web app URL first");return}
+if(!/^https:\/\/script\.google\.com\/.+\/exec(\?.*)?$/.test(url)){toast("The link must start with https://script.google.com and end with /exec");return}
+var rows=[],skipped=0;
+S.rows.forEach(function(r){
+if(!r.key)r.key=uid();
+if(!r.courierId||r.km===""||r.km==null){skipped++;return}
+rows.push({key:r.key,date:r.date,courierId:r.courierId,predictedCost:pred(r)})
+});
+save();
+if(!rows.length){toast("Nothing to send. Add Courier ID and km first");return}
+var added=0,updated=0;
+toast("Sending...");
+try{
+for(var i=0;i<rows.length;i+=15){
+var res=await jsonp(url,{token:tok,rows:rows.slice(i,i+15)});
+if(!res||!res.ok){toast("Sheet error: "+(res&&res.error?res.error:"unknown"));return}
+added+=res.added;updated+=res.updated
+}
+toast("Sheet: "+added+" added, "+updated+" updated"+(skipped?", "+skipped+" skipped (no ID or km)":""))
+}catch(e){toast("No answer from the script. Paste the newest script, deploy a New version and set access to Anyone.")}
+});
+document.getElementById("add").addEventListener("click",function(){S.rows.push(newRow());save();render()});
+document.getElementById("calc").addEventListener("click",async function(){
+for(var i=0;i<S.rows.length;i++){await calc(S.rows[i])}
+toast("Done")
+});
+document.getElementById("clear").addEventListener("click",function(){
+if(S.rows.length&&window.confirm("Remove all rows?")){S.rows=[newRow()];save();render()}
+});
+if(!S.defaults.sheeturl&&DEFAULT_SHEET_URL)S.defaults.sheeturl=DEFAULT_SHEET_URL;
+["city","requester","team","pickup","dropoff","base","rate","min","sheeturl","token"].forEach(function(k){
+var el=document.getElementById("d-"+k);el.value=k==="rate"?rate():k==="base"?base():k==="min"?minc():(S.defaults[k]||"");
+el.addEventListener("input",function(){S.defaults[k]=el.value;save();
+if(k==="rate"||k==="base"||k==="min"){refs.forEach(function(e,r){e.pr.value=r.km===""?"":pred(r).toLocaleString("en-US")+" rsd"});stats()}})
+});
+if(!S.rows.length)S.rows.push(newRow());
+render()
+})();
+</script>
+</body>
+</html>
